@@ -1,0 +1,184 @@
+{
+  "name": "Recordatorios de pastillas (Telegram → Google Calendar)",
+  "nodes": [
+    {
+      "id": "a1",
+      "name": "Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "pastillas-telegram",
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {}
+      }
+    },
+    {
+      "id": "a2",
+      "name": "Entender mensaje",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// ===== CAMBIA ESTO si vives en otro país =====\nconst ZONA = 'America/Bogota';\n// =============================================\n\nconst msg = $input.first().json.message;\nconst chatId = msg.chat.id;\nlet texto = (msg.text || '').toLowerCase();\n\n// 1) Cambiar números escritos con letras por cifras (\"tres\" -> 3)\nconst numeros = {\n  un: 1, uno: 1, una: 1, dos: 2, tres: 3, cuatro: 4, cinco: 5, seis: 6,\n  siete: 7, ocho: 8, nueve: 9, diez: 10, once: 11, doce: 12, catorce: 14,\n  quince: 15, veinte: 20, treinta: 30,\n};\ntexto = texto.split(/(\\s+)/).map(p => numeros[p] ?? p).join('');\n\n// 2) Buscar \"cada X horas\" y \"por Y días\" (o \"por Y semanas\")\nconst mHoras = texto.match(/cada\\s+(\\d+)\\s*h/);\nconst mDias = texto.match(/(?:por|durante)\\s+(\\d+)\\s*(d[ií]a|semana)/);\nif (!mHoras || !mDias) {\n  return [{ json: { error: true, chatId } }];\n}\nconst cadaHoras = parseInt(mHoras[1]);\nconst dias = parseInt(mDias[1]) * (mDias[2] === 'semana' ? 7 : 1);\nif (cadaHoras < 1) {\n  return [{ json: { error: true, chatId } }];\n}\n\n// 3) Nombre de la pastilla = lo que está antes de \"cada\"\nlet pastilla = texto.split('cada')[0].replace(/^\\s*(tomar|toma|tomarme)\\s+/, '').trim();\npastilla = pastilla.charAt(0).toUpperCase() + pastilla.slice(1);\n\n// 4) Hora de la primera toma: \"desde las 8\", \"a partir de las 7:30 pm\".\n//    Si no dices nada, empieza AHORA.\nconst ahora = DateTime.now().setZone(ZONA);\nlet inicio = ahora.set({ second: 0, millisecond: 0 });\nconst mIni = texto.match(/(?:desde|a partir de|empezando)\\s+(?:a\\s+)?(?:las?\\s+)?(\\d{1,2})(?::(\\d{2}))?\\s*(am|pm|a\\.\\s*m\\.?|p\\.\\s*m\\.?)?/);\nif (mIni) {\n  let h = parseInt(mIni[1]);\n  const m = parseInt(mIni[2] || '0');\n  if (mIni[3] && mIni[3].startsWith('p') && h < 12) h += 12;\n  if (mIni[3] && mIni[3].startsWith('a') && h === 12) h = 0;\n  inicio = inicio.set({ hour: h, minute: m });\n  if (inicio < ahora) inicio = inicio.plus({ days: 1 }); // si esa hora ya pasó, mañana\n}\n\n// 5) Armar la lista de tomas (una por cada evento del calendario)\nconst total = Math.floor((dias * 24) / cadaHoras);\nconst items = [];\nfor (let i = 0; i < total; i++) {\n  const t = inicio.plus({ hours: i * cadaHoras });\n  items.push({\n    json: {\n      error: false,\n      chatId,\n      pastilla,\n      total,\n      titulo: `💊 Tomar ${pastilla} (${i + 1}/${total})`,\n      inicio: t.toISO(),\n      fin: t.plus({ minutes: 15 }).toISO(),\n      primera: inicio.toFormat('dd/MM/yyyy hh:mm a'),\n    },\n  });\n}\nreturn items;\n"
+      }
+    },
+    {
+      "id": "a3",
+      "name": "¿Entendí?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.error }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "false",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "a4",
+      "name": "Crear evento",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.2,
+      "position": [
+        680,
+        -100
+      ],
+      "parameters": {
+        "calendar": {
+          "__rl": true,
+          "mode": "list",
+          "value": ""
+        },
+        "start": "={{ $json.inicio }}",
+        "end": "={{ $json.fin }}",
+        "additionalFields": {
+          "summary": "={{ $json.titulo }}",
+          "description": "Recordatorio creado desde Telegram"
+        }
+      }
+    },
+    {
+      "id": "a5",
+      "name": "Confirmar",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        900,
+        -100
+      ],
+      "executeOnce": true,
+      "parameters": {
+        "chatId": "={{ $('Entender mensaje').first().json.chatId }}",
+        "text": "=✅ Listo: creé {{ $('Entender mensaje').first().json.total }} recordatorios de {{ $('Entender mensaje').first().json.pastilla }}.\nPrimera toma: {{ $('Entender mensaje').first().json.primera }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      }
+    },
+    {
+      "id": "a6",
+      "name": "No entendí",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        680,
+        120
+      ],
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "No te entendí 😅\nEscríbelo así:\nIbuprofeno cada 8 horas por 3 días desde las 8 am",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "Entender mensaje",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Entender mensaje": {
+      "main": [
+        [
+          {
+            "node": "¿Entendí?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Entendí?": {
+      "main": [
+        [
+          {
+            "node": "Crear evento",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No entendí",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Crear evento": {
+      "main": [
+        [
+          {
+            "node": "Confirmar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/Bogota"
+  },
+  "pinData": {}
+}
