@@ -256,7 +256,7 @@ Cualquiera que encuentre tu bot podría escribirle y llenarte el calendario. Par
 
 1. Cada persona abre `t.me/tu_usuario_bot` y le escribe algo. Si no está en la lista, el bot le contesta con **su número de chat**.
 2. En Google Calendar crea un calendario para esa persona (**Otros calendarios → + → Crear un calendario**) y compártelo con su Gmail ("Ver todos los detalles"). Copia su **ID del calendario** (sección *Integrar el calendario*).
-3. En el nodo **Entender mensaje** agrega una línea en `USUARIOS` con su número y su ID de calendario. Tú usas `'primary'`.
+3. En el nodo **Entender mensaje** agrega una línea en `USUARIOS` con su número y su ID de calendario. Para ti, pon tu Gmail como calendario (n8n no acepta la palabra `primary`).
 4. La persona acepta la invitación y activa las notificaciones de ese calendario en su Google Calendar.
 
 ## 📎 Anexo: armar el workflow a mano (si no lo importaste)
@@ -277,7 +277,7 @@ const chatId = msg.chat.id;                                   // Lo almacena en 
 
 // Usuarios que tienen permiso para utilizar el bot
 const USUARIOS = {
-  111111111:  { nombre: 'Cristian', calendario: 'primary' },   // ← tu número de chat · primary = tu calendario principal
+  111111111:  { nombre: 'Cristian', calendario: 'tu_correo@gmail.com' },   // ← tu número de chat · tu Gmail = tu calendario principal (n8n no acepta la palabra primary)
   987654321:  { nombre: 'Mamá',     calendario: 'ID_DEL_CALENDARIO@group.calendar.google.com' }, // ← cambiar 987654321 por el número de Mamá
 };
 const usuario = USUARIOS[chatId];
