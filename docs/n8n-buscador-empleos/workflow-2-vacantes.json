@@ -1,0 +1,939 @@
+{
+  "name": "Empleos 2 · Buscar vacantes y redactar correos",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 8 * * 1-5"
+            }
+          ]
+        }
+      },
+      "id": "c9a0f97e-9c16-5cd5-aeb9-5df8e7a27a02",
+      "name": "Cada mañana 8:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "6177b83b-ccef-5fdd-9bb7-67744f15c7fa",
+      "name": "Probar ahora",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "PEGA_AQUI_LA_URL_DE_TU_GOOGLE_SHEET",
+          "mode": "url"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Perfil",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "id": "937456fe-bd51-5ba0-9862-660358234ed9",
+      "name": "Leer Perfil",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        240,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "PEGA_AQUI_LA_URL_DE_TU_GOOGLE_SHEET",
+          "mode": "url"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Preguntas",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "id": "ab676649-4296-5250-8c76-1d10e73d091f",
+      "name": "Leer Preguntas",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        460,
+        100
+      ],
+      "executeOnce": true,
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Junta en un solo texto: tu perfil + las preguntas que YA respondiste.\n// Ese texto es lo que Claude lee para decidir si encajas y para escribir cada correo.\nconst perfil = $('Leer Perfil').all().map(i => i.json).find(r => r['Clave'] === 'principal');\nif (!perfil) {\n  throw new Error('No encontré tu perfil. Ejecuta primero el Flujo 1 (formulario del CV).');\n}\n\nconst respondidas = $('Leer Preguntas').all()\n  .map(i => i.json)\n  .filter(r => r['Pregunta'] && String(r['Respuesta'] || '').trim() !== '');\n\nlet detalle = {};\ntry { detalle = JSON.parse(perfil['Perfil JSON'] || '{}'); } catch (e) {}\n\nconst perfilTexto = [\n  `Nombre: ${perfil['Nombre']}`,\n  `Email: ${perfil['Email']}`,\n  `Resumen: ${perfil['Resumen']}`,\n  `Cargos objetivo: ${perfil['Cargos objetivo']}`,\n  `Habilidades: ${perfil['Habilidades']}`,\n  `Idiomas: ${perfil['Idiomas']}`,\n  `Años de experiencia: ${detalle.anos_experiencia ?? 'no indicado'}`,\n  `Logros: ${(detalle.logros_clave || []).join(' | ')}`,\n  `Modalidad deseada: ${perfil['Modalidad']} (Quito, Ecuador o remoto mundial)`,\n  `Salario esperado (USD/mes): ${perfil['Salario esperado'] || 'no indicado'}`,\n  '',\n  'Respuestas adicionales del candidato:',\n  ...respondidas.map(r => `- ${r['Pregunta']} → ${r['Respuesta']}`),\n].join('\\n');\n\nconst keywords = String(perfil['Keywords'] || '')\n  .split(',').map(k => k.trim()).filter(Boolean)\n  // Máximo 4 palabras: cada una gasta 2 búsquedas de JSearch (plan gratis = 200 al mes).\n  .slice(0, 4);\n\nreturn [{ json: { perfilTexto, keywords, modalidad: perfil['Modalidad'] || 'Ambos' } }];"
+      },
+      "id": "2babc31c-b9d7-57b2-824e-df962b7e437c",
+      "name": "Armar perfil",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        680,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Un item por palabra clave. Cada nodo de búsqueda que sigue se ejecuta\n// una vez por cada item, o sea, una búsqueda por palabra clave.\nconst { keywords, modalidad } = $json;\nreturn keywords.map(keyword => ({ json: { keyword, modalidad } }));"
+      },
+      "id": "031254df-a13c-5fb4-a19d-9e4af44a2550",
+      "name": "Una búsqueda por palabra",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        900,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://jsearch.p.rapidapi.com/search",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "query",
+              "value": "={{ $json.keyword }} in Quito, Ecuador"
+            },
+            {
+              "name": "page",
+              "value": "1"
+            },
+            {
+              "name": "num_pages",
+              "value": "1"
+            },
+            {
+              "name": "date_posted",
+              "value": "week"
+            },
+            {
+              "name": "country",
+              "value": "ec"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-RapidAPI-Host",
+              "value": "jsearch.p.rapidapi.com"
+            }
+          ]
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "id": "4e824749-bb61-5398-b0aa-b9c5360a308c",
+      "name": "LinkedIn y otros · Quito",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        -200
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "url": "https://jsearch.p.rapidapi.com/search",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "query",
+              "value": "={{ $json.keyword }}"
+            },
+            {
+              "name": "page",
+              "value": "1"
+            },
+            {
+              "name": "num_pages",
+              "value": "1"
+            },
+            {
+              "name": "date_posted",
+              "value": "week"
+            },
+            {
+              "name": "remote_jobs_only",
+              "value": "true"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-RapidAPI-Host",
+              "value": "jsearch.p.rapidapi.com"
+            }
+          ]
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "id": "43b0698a-e26c-5636-b11f-2829559429e5",
+      "name": "LinkedIn y otros · Remoto",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        0
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "url": "https://remotive.com/api/remote-jobs",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "search",
+              "value": "={{ $json.keyword }}"
+            },
+            {
+              "name": "limit",
+              "value": "20"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "acb407c1-2060-5c9f-b833-b8cb8755aa52",
+      "name": "Remotive (remoto)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        200
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "url": "https://remoteok.com/api",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "tag",
+              "value": "={{ $json.keyword.toLowerCase().split(' ')[0] }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "n8n-buscador-empleos"
+            }
+          ]
+        }
+      },
+      "id": "9c832413-40ea-5e5c-8eca-42eb4554a54b",
+      "name": "RemoteOK (remoto)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        420
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.apify.com/v2/acts/PEGA_AQUI_EL_ID_DEL_ACTOR/run-sync-get-dataset-items",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpQueryAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ searchQueries: $('Armar perfil').first().json.keywords, maxItems: 30 }) }}",
+        "options": {
+          "timeout": 300000
+        }
+      },
+      "id": "8fbc5b6f-2f48-5dd4-b615-4e1311f7e7e9",
+      "name": "Upwork (Apify)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        640
+      ],
+      "onError": "continueRegularOutput",
+      "executeOnce": true,
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// JSearch devuelve vacantes de LinkedIn, Indeed, Glassdoor, etc.\n// Las convertimos al formato común que usan todas las fuentes.\nconst limpiar = (html) => String(html || '')\n  .replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&')\n  .replace(/\\s+/g, ' ').trim().slice(0, 5000);\nconst salida = [];\nfor (const item of $input.all()) {\n  for (const j of (item.json.data || [])) {\n    salida.push({ json: {\n      id: 'jsearch-' + j.job_id,\n      fuente: j.job_publisher || 'JSearch',\n      cargo: j.job_title,\n      empresa: j.employer_name || '',\n      ubicacion: [j.job_city, j.job_country].filter(Boolean).join(', ') || 'No indicada',\n      modalidad: j.job_is_remote ? 'Remoto' : 'Presencial/Híbrido',\n      link: j.job_apply_link || j.job_google_link || '',\n      descripcion: limpiar(j.job_description),\n      fecha: (j.job_posted_at_datetime_utc || '').slice(0, 10),\n    }});\n  }\n}\nreturn salida;"
+      },
+      "id": "305f5abc-2b90-58a7-a040-8b75219a501a",
+      "name": "Normalizar Quito",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        -200
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// JSearch devuelve vacantes de LinkedIn, Indeed, Glassdoor, etc.\n// Las convertimos al formato común que usan todas las fuentes.\nconst limpiar = (html) => String(html || '')\n  .replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&')\n  .replace(/\\s+/g, ' ').trim().slice(0, 5000);\nconst salida = [];\nfor (const item of $input.all()) {\n  for (const j of (item.json.data || [])) {\n    salida.push({ json: {\n      id: 'jsearch-' + j.job_id,\n      fuente: j.job_publisher || 'JSearch',\n      cargo: j.job_title,\n      empresa: j.employer_name || '',\n      ubicacion: [j.job_city, j.job_country].filter(Boolean).join(', ') || 'No indicada',\n      modalidad: j.job_is_remote ? 'Remoto' : 'Presencial/Híbrido',\n      link: j.job_apply_link || j.job_google_link || '',\n      descripcion: limpiar(j.job_description),\n      fecha: (j.job_posted_at_datetime_utc || '').slice(0, 10),\n    }});\n  }\n}\nreturn salida;"
+      },
+      "id": "be64aeb7-e93d-5755-a2ba-e70c0020ff09",
+      "name": "Normalizar Remoto",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        0
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Remotive: portal de trabajos 100% remotos (API pública y gratuita).\nconst limpiar = (html) => String(html || '')\n  .replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&')\n  .replace(/\\s+/g, ' ').trim().slice(0, 5000);\nconst salida = [];\nfor (const item of $input.all()) {\n  for (const j of (item.json.jobs || [])) {\n    salida.push({ json: {\n      id: 'remotive-' + j.id,\n      fuente: 'Remotive',\n      cargo: j.title,\n      empresa: j.company_name || '',\n      ubicacion: j.candidate_required_location || 'Worldwide',\n      modalidad: 'Remoto',\n      link: j.url,\n      descripcion: limpiar(j.description),\n      fecha: (j.publication_date || '').slice(0, 10),\n    }});\n  }\n}\nreturn salida;"
+      },
+      "id": "c4d472ce-419a-50ed-bec0-5fec996ea25d",
+      "name": "Normalizar Remotive",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        200
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// RemoteOK devuelve una lista; el nodo HTTP la separa en un item por vacante.\n// El primer elemento es un aviso legal (no tiene \"position\") y se descarta.\nconst limpiar = (html) => String(html || '')\n  .replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&')\n  .replace(/\\s+/g, ' ').trim().slice(0, 5000);\nconst salida = [];\nfor (const item of $input.all()) {\n  const j = item.json;\n  if (!j.position || !j.url) continue;\n  salida.push({ json: {\n    id: 'remoteok-' + j.id,\n    fuente: 'RemoteOK',\n    cargo: j.position,\n    empresa: j.company || '',\n    ubicacion: j.location || 'Worldwide',\n    modalidad: 'Remoto',\n    link: j.apply_url || j.url,\n    descripcion: limpiar(j.description),\n    fecha: (j.date || '').slice(0, 10),\n  }});\n}\nreturn salida;"
+      },
+      "id": "c58149f8-69f8-5993-a402-5db5d1196f9c",
+      "name": "Normalizar RemoteOK",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        420
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Upwork vía Apify. Cada actor de Apify nombra los campos un poco distinto,\n// por eso probamos varios nombres posibles. Si el nodo Apify está desactivado,\n// aquí llegan las palabras clave (sin link) y simplemente se descartan.\nconst limpiar = (html) => String(html || '')\n  .replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&')\n  .replace(/\\s+/g, ' ').trim().slice(0, 5000);\nconst salida = [];\nfor (const item of $input.all()) {\n  const j = item.json;\n  const link = j.url || j.link || j.jobUrl || '';\n  if (!link) continue;\n  salida.push({ json: {\n    id: 'upwork-' + (j.id || j.uid || link),\n    fuente: 'Upwork',\n    cargo: j.title || j.jobTitle || 'Proyecto Upwork',\n    empresa: j.client?.country ? `Cliente de ${j.client.country}` : 'Cliente Upwork',\n    ubicacion: 'Worldwide',\n    modalidad: 'Remoto (freelance)',\n    link,\n    descripcion: limpiar(j.description || j.snippet),\n    fecha: String(j.publishedAt || j.createdOn || j.date || '').slice(0, 10),\n  }});\n}\nreturn salida;"
+      },
+      "id": "80b8046e-4ea1-5a27-aecc-8fcca3e71e89",
+      "name": "Normalizar Upwork",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        640
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "numberInputs": 5
+      },
+      "id": "a639f1b9-e41e-53ea-891f-44242cf54995",
+      "name": "Unir fuentes",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        1560,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "PEGA_AQUI_LA_URL_DE_TU_GOOGLE_SHEET",
+          "mode": "url"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Vacantes",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "id": "24c66db3-9dc5-5650-a353-9bc16b7c5eb9",
+      "name": "Leer Vacantes guardadas",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1780,
+        200
+      ],
+      "executeOnce": true,
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// 1) Junta todas las fuentes  2) quita vacantes sin link o repetidas\n// 3) quita las que YA están en tu hoja (para no pagar a Claude dos veces por la misma)\n// 4) se queda con máximo 25 por ejecución para controlar el costo.\nconst MAX_POR_EJECUCION = 25;\n\nconst yaGuardadas = new Set(\n  $('Leer Vacantes guardadas').all().map(i => String(i.json['ID'] || '')).filter(Boolean)\n);\nconst linksGuardados = new Set(\n  $('Leer Vacantes guardadas').all().map(i => String(i.json['Link'] || '')).filter(Boolean)\n);\n\n// Respeta la modalidad que elegiste en el formulario (Ambos / Solo Quito / Solo remoto)\nconst modalidad = $('Armar perfil').first().json.modalidad;\nconst esRemoto = v => String(v.modalidad).startsWith('Remoto');\n\nconst vistas = new Set();\nconst nuevas = [];\nfor (const item of $('Unir fuentes').all()) {\n  const v = item.json;\n  if (!v.link || !v.cargo) continue;\n  const clave = v.link.split('?')[0];\n  const claveTexto = `${v.cargo}|${v.empresa}`.toLowerCase();\n  if (vistas.has(clave) || vistas.has(claveTexto)) continue;\n  if (yaGuardadas.has(v.id) || linksGuardados.has(v.link)) continue;\n  if (modalidad === 'Solo Quito' && esRemoto(v)) continue;\n  if (modalidad === 'Solo remoto' && !esRemoto(v)) continue;\n  vistas.add(clave); vistas.add(claveTexto);\n  nuevas.push({ json: v });\n}\n\n// Las más recientes primero\nnuevas.sort((a, b) => String(b.json.fecha).localeCompare(String(a.json.fecha)));\nreturn nuevas.slice(0, MAX_POR_EJECUCION);"
+      },
+      "id": "de083114-34b3-5246-9bb5-41d701e52150",
+      "name": "Quitar repetidas",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2000,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=PERFIL DEL CANDIDATO:\n{{ $('Armar perfil').first().json.perfilTexto }}\n\nVACANTE:\n- Cargo: {{ $json.cargo }}\n- Empresa: {{ $json.empresa }}\n- Ubicación: {{ $json.ubicacion }} ({{ $json.modalidad }})\n- Fuente: {{ $json.fuente }}\n- Descripción:\n{{ $json.descripcion }}",
+        "hasOutputParser": true,
+        "messages": {
+          "messageValues": [
+            {
+              "message": "Eres un reclutador experto que ayuda a un candidato a postular a trabajos.\n\nPara cada vacante:\n1. \"match_score\" (0-100): compara requisitos de la vacante con el perfil. 80+ = encaja muy bien, 65-79 = vale la pena aplicar, <65 = no encaja. Sé honesto, no infles el puntaje.\n2. \"ubicacion_valida\": true solo si la vacante es en Quito (Ecuador) o es remota y acepta candidatos desde Ecuador, LatAm o cualquier país. Si es remota pero solo para EE. UU., UE u otro país específico, false.\n3. \"email_contacto\": copia un correo SOLO si aparece literalmente en la descripción. Si no hay, devuelve \"\". Nunca inventes correos.\n4. \"mail_asunto\" y \"mail_cuerpo\": un correo de postulación listo para revisar.\n   - En el MISMO idioma de la vacante (español o inglés).\n   - 120 a 180 palabras, tono profesional y cercano, sin frases cliché.\n   - Menciona el cargo y la empresa, 2-3 logros o habilidades del perfil que respondan a los requisitos, y cierra pidiendo una conversación. Indica que adjunta su CV.\n   - Usa SOLO datos del perfil. Si te falta un dato clave, escribe [COMPLETAR: qué falta] en el texto en lugar de inventarlo.\n   - Firma con el nombre del candidato.\n5. \"preguntas_para_mi\": preguntas cortas para el candidato cuando falte información para postular mejor (ej.: \"¿Tienes experiencia con Salesforce?\"). Lista vacía si no hace falta.\nResponde únicamente con el JSON pedido."
+            }
+          ]
+        }
+      },
+      "id": "b99f2971-28b2-51fd-898b-a866a6493159",
+      "name": "Analizar y redactar (Claude)",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.5,
+      "position": [
+        2220,
+        200
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "id",
+          "value": "claude-sonnet-5-5"
+        },
+        "options": {
+          "maxTokensToSample": 2000,
+          "temperature": 0.4
+        }
+      },
+      "id": "d7be82bf-9cd6-5d7a-896f-50c9cf0a92b7",
+      "name": "Claude (vacantes)",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.3,
+      "position": [
+        2160,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "schemaType": "manual",
+        "inputSchema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"match_score\": {\n      \"type\": \"number\",\n      \"description\": \"0 a 100: qué tan bien encaja el candidato\"\n    },\n    \"razon\": {\n      \"type\": \"string\",\n      \"description\": \"1-2 frases en español: por qué encaja o no\"\n    },\n    \"ubicacion_valida\": {\n      \"type\": \"boolean\",\n      \"description\": \"true si es en Quito o remoto abierto a candidatos en Ecuador/LatAm/mundial\"\n    },\n    \"email_contacto\": {\n      \"type\": \"string\",\n      \"description\": \"Correo que aparezca en la descripción, o cadena vacía\"\n    },\n    \"mail_asunto\": {\n      \"type\": \"string\"\n    },\n    \"mail_cuerpo\": {\n      \"type\": \"string\"\n    },\n    \"preguntas_para_mi\": {\n      \"type\": \"array\",\n      \"items\": {\n        \"type\": \"string\"\n      }\n    }\n  },\n  \"required\": [\n    \"match_score\",\n    \"razon\",\n    \"ubicacion_valida\",\n    \"email_contacto\",\n    \"mail_asunto\",\n    \"mail_cuerpo\",\n    \"preguntas_para_mi\"\n  ]\n}"
+      },
+      "id": "a5b38729-6c2f-567f-a42f-7c36e6385885",
+      "name": "Formato del análisis",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.2,
+      "position": [
+        2340,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Une la vacante original con el análisis de Claude\n// y arma la fila con los mismos nombres de columna que tu hoja \"Vacantes\".\nconst v = $('Quitar repetidas').item.json;\n// Si Claude falló con esta vacante, r queda vacío y el filtro la descarta (Match 0).\nconst r = $json.output || {};\n\nconst preguntas = (r.preguntas_para_mi || []).map(p => '• ' + p).join('\\n');\n\nreturn {\n  json: {\n    'Fecha': $now.toFormat('yyyy-LL-dd'),\n    'Fuente': v.fuente,\n    'Cargo': v.cargo,\n    'Empresa': v.empresa,\n    'Ubicación': `${v.ubicacion} · ${v.modalidad}`,\n    'Match %': Math.round(Number(r.match_score) || 0),\n    'Por qué encajo': r.razon,\n    'Link': v.link,\n    'Email': r.email_contacto ? r.email_contacto : 'Aplicar por link',\n    'Asunto': r.mail_asunto,\n    'Mail': r.mail_cuerpo,\n    'Preguntas para mí': preguntas,\n    'Estado': 'Sin enviar',\n    'Fecha envío': '',\n    'ID': v.id,\n    '_ubicacion_valida': r.ubicacion_valida === true,\n  }\n};"
+      },
+      "id": "8aa6e7a2-da55-5ea2-a229-b13ad8ed267d",
+      "name": "Preparar fila Vacante",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2480,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "a58739dc-9e4e-5087-981f-c0edf6e76f38",
+              "leftValue": "={{ $json['Match %'] }}",
+              "rightValue": 65,
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            },
+            {
+              "id": "f8a449d5-9eb9-53df-a0c0-d76742ac970a",
+              "leftValue": "={{ $json._ubicacion_valida }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "9a3a2ff9-123b-5ac4-9cb3-349c64ba6939",
+      "name": "¿Encaja? (65%+ y ubicación OK)",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.2,
+      "position": [
+        2700,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Quita el campo auxiliar \"_ubicacion_valida\" (no es una columna de la hoja).\nreturn $input.all().map(i => {\n  const { _ubicacion_valida, ...fila } = i.json;\n  return { json: fila };\n});"
+      },
+      "id": "55b42f45-78b8-5398-ade6-c663f4895d58",
+      "name": "Quitar campo auxiliar",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2920,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "PEGA_AQUI_LA_URL_DE_TU_GOOGLE_SHEET",
+          "mode": "url"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Vacantes",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {}
+        },
+        "options": {}
+      },
+      "id": "82c997ec-ba31-5b74-bbc0-daf0f2c5798d",
+      "name": "Guardar en Vacantes",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        3140,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Arma el resumen que te llega por correo con los cargos a los que puedes aplicar.\nconst filas = $input.all().map(i => i.json);\nconst lineas = filas\n  .sort((a, b) => b['Match %'] - a['Match %'])\n  .map(f => `• [${f['Match %']}%] ${f['Cargo']} — ${f['Empresa']} (${f['Ubicación']})\\n  ${f['Link']}`);\n\nreturn [{\n  json: {\n    asunto: `🎯 ${filas.length} vacantes nuevas donde puedes aplicar`,\n    cuerpo: [\n      `Hola, encontré ${filas.length} vacantes que encajan con tu perfil:`,\n      '',\n      ...lineas,\n      '',\n      'Los correos ya están redactados en tu Google Sheet (pestaña \"Vacantes\").',\n      'Revísalos, ajústalos, envíalos tú y cambia el Estado a \"Enviado\".',\n    ].join('\\n'),\n  }\n}];"
+      },
+      "id": "5f6cb41f-3349-52c5-a469-e47999276e87",
+      "name": "Armar aviso",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3360,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "PEGA_AQUI_TU_CORREO@gmail.com",
+        "subject": "={{ $json.asunto }}",
+        "emailType": "text",
+        "message": "={{ $json.cuerpo }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "id": "5815eb46-c4cd-5775-98b5-d53b666496a4",
+      "name": "Avisarme por Gmail",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        3580,
+        200
+      ]
+    }
+  ],
+  "connections": {
+    "Cada mañana 8:00": {
+      "main": [
+        [
+          {
+            "node": "Leer Perfil",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Probar ahora": {
+      "main": [
+        [
+          {
+            "node": "Leer Perfil",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Leer Perfil": {
+      "main": [
+        [
+          {
+            "node": "Leer Preguntas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Leer Preguntas": {
+      "main": [
+        [
+          {
+            "node": "Armar perfil",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Armar perfil": {
+      "main": [
+        [
+          {
+            "node": "Una búsqueda por palabra",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Una búsqueda por palabra": {
+      "main": [
+        [
+          {
+            "node": "LinkedIn y otros · Quito",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "LinkedIn y otros · Remoto",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Remotive (remoto)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "RemoteOK (remoto)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Upwork (Apify)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LinkedIn y otros · Quito": {
+      "main": [
+        [
+          {
+            "node": "Normalizar Quito",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LinkedIn y otros · Remoto": {
+      "main": [
+        [
+          {
+            "node": "Normalizar Remoto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Remotive (remoto)": {
+      "main": [
+        [
+          {
+            "node": "Normalizar Remotive",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "RemoteOK (remoto)": {
+      "main": [
+        [
+          {
+            "node": "Normalizar RemoteOK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upwork (Apify)": {
+      "main": [
+        [
+          {
+            "node": "Normalizar Upwork",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalizar Quito": {
+      "main": [
+        [
+          {
+            "node": "Unir fuentes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalizar Remoto": {
+      "main": [
+        [
+          {
+            "node": "Unir fuentes",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Normalizar Remotive": {
+      "main": [
+        [
+          {
+            "node": "Unir fuentes",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    },
+    "Normalizar RemoteOK": {
+      "main": [
+        [
+          {
+            "node": "Unir fuentes",
+            "type": "main",
+            "index": 3
+          }
+        ]
+      ]
+    },
+    "Normalizar Upwork": {
+      "main": [
+        [
+          {
+            "node": "Unir fuentes",
+            "type": "main",
+            "index": 4
+          }
+        ]
+      ]
+    },
+    "Unir fuentes": {
+      "main": [
+        [
+          {
+            "node": "Leer Vacantes guardadas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Leer Vacantes guardadas": {
+      "main": [
+        [
+          {
+            "node": "Quitar repetidas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Quitar repetidas": {
+      "main": [
+        [
+          {
+            "node": "Analizar y redactar (Claude)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude (vacantes)": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Analizar y redactar (Claude)",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Formato del análisis": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "Analizar y redactar (Claude)",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analizar y redactar (Claude)": {
+      "main": [
+        [
+          {
+            "node": "Preparar fila Vacante",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar fila Vacante": {
+      "main": [
+        [
+          {
+            "node": "¿Encaja? (65%+ y ubicación OK)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Encaja? (65%+ y ubicación OK)": {
+      "main": [
+        [
+          {
+            "node": "Quitar campo auxiliar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Quitar campo auxiliar": {
+      "main": [
+        [
+          {
+            "node": "Guardar en Vacantes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Guardar en Vacantes": {
+      "main": [
+        [
+          {
+            "node": "Armar aviso",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Armar aviso": {
+      "main": [
+        [
+          {
+            "node": "Avisarme por Gmail",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/Guayaquil"
+  },
+  "pinData": {}
+}

@@ -1,0 +1,347 @@
+{
+  "name": "Empleos 1 · Perfil desde mi CV",
+  "nodes": [
+    {
+      "parameters": {
+        "formTitle": "Mi perfil para buscar trabajo",
+        "formDescription": "Sube tu CV en PDF y cuéntame qué buscas. Con esto armo tu perfil y las preguntas para conocerte mejor.",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "CV",
+              "fieldType": "file",
+              "multipleFiles": false,
+              "acceptFileTypes": ".pdf",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Cargos que buscas",
+              "placeholder": "Ej.: Analista de datos, Automatizador n8n, Soporte TI",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Modalidad",
+              "fieldType": "dropdown",
+              "requiredField": true,
+              "fieldOptions": {
+                "values": [
+                  {
+                    "option": "Ambos"
+                  },
+                  {
+                    "option": "Solo Quito"
+                  },
+                  {
+                    "option": "Solo remoto"
+                  }
+                ]
+              }
+            },
+            {
+              "fieldLabel": "Nivel",
+              "fieldType": "dropdown",
+              "fieldOptions": {
+                "values": [
+                  {
+                    "option": "Junior"
+                  },
+                  {
+                    "option": "Semi senior"
+                  },
+                  {
+                    "option": "Senior"
+                  },
+                  {
+                    "option": "Freelance / por proyecto"
+                  }
+                ]
+              }
+            },
+            {
+              "fieldLabel": "Idiomas y nivel",
+              "placeholder": "Ej.: Español nativo, Inglés B2"
+            },
+            {
+              "fieldLabel": "Salario esperado (USD/mes)",
+              "fieldType": "number"
+            },
+            {
+              "fieldLabel": "Algo más que deba saber",
+              "fieldType": "textarea",
+              "placeholder": "Portafolio, certificaciones, disponibilidad, etc."
+            }
+          ]
+        },
+        "responseMode": "onReceived",
+        "options": {
+          "respondWithOptions": {
+            "values": {
+              "formSubmittedText": "¡Listo! Tu perfil se está procesando. Revisa la pestaña 'Preguntas' de tu Google Sheet en un minuto."
+            }
+          }
+        }
+      },
+      "id": "d7f9aa07-4b5a-5d13-9c7a-7a583bdb484f",
+      "name": "Formulario CV",
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "f102f0b1-83a9-5c30-a326-db216d6140b0"
+    },
+    {
+      "parameters": {
+        "operation": "pdf",
+        "binaryPropertyName": "CV",
+        "options": {}
+      },
+      "id": "02e90480-6ae4-59cc-850e-8761fd33726c",
+      "name": "Leer PDF",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=CV (texto extraído del PDF):\n{{ $json.text }}\n\nDatos del formulario:\n- Cargos que busco: {{ $('Formulario CV').item.json['Cargos que buscas'] }}\n- Modalidad: {{ $('Formulario CV').item.json['Modalidad'] }}\n- Nivel: {{ $('Formulario CV').item.json['Nivel'] }}\n- Idiomas: {{ $('Formulario CV').item.json['Idiomas y nivel'] }}\n- Salario esperado: {{ $('Formulario CV').item.json['Salario esperado (USD/mes)'] }}\n- Información adicional: {{ $('Formulario CV').item.json['Algo más que deba saber'] }}\n\nConstruye mi perfil profesional.",
+        "hasOutputParser": true,
+        "messages": {
+          "messageValues": [
+            {
+              "message": "Eres un reclutador experto y coach de carrera. Analizas CVs para encontrar los trabajos donde la persona tiene más opciones de ser contratada, en Quito (Ecuador) o en remoto a nivel mundial.\n\nReglas:\n- Usa SOLO la información del CV y del formulario. No inventes empresas, títulos, años ni logros.\n- Si algo importante falta o es ambiguo (años con una herramienta, nivel de inglés, disponibilidad, pretensión salarial, portafolio, si acepta freelance), conviértelo en una pregunta corta en \"preguntas_aclaracion\".\n- \"keywords_busqueda\": títulos de cargo reales y cortos, tal como aparecen en ofertas de LinkedIn (ej.: \"Data Analyst\", \"Analista de datos\", \"n8n automation\"). Máximo 6.\n- Responde únicamente con el JSON pedido."
+            }
+          ]
+        }
+      },
+      "id": "0c206aa7-5e5f-5a7b-b10d-ed630de55ca9",
+      "name": "Generar perfil (Claude)",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.5,
+      "position": [
+        440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "id",
+          "value": "claude-sonnet-5-5"
+        },
+        "options": {
+          "maxTokensToSample": 2000,
+          "temperature": 0.4
+        }
+      },
+      "id": "37e6f630-1fa9-55dd-b705-4ed96b0d7cd6",
+      "name": "Claude (perfil)",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.3,
+      "position": [
+        380,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "schemaType": "manual",
+        "inputSchema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"nombre\": {\n      \"type\": \"string\"\n    },\n    \"email\": {\n      \"type\": \"string\"\n    },\n    \"resumen_profesional\": {\n      \"type\": \"string\",\n      \"description\": \"3-4 líneas en español\"\n    },\n    \"anos_experiencia\": {\n      \"type\": \"number\"\n    },\n    \"cargos_objetivo\": {\n      \"type\": \"array\",\n      \"items\": {\n        \"type\": \"string\"\n      }\n    },\n    \"keywords_busqueda\": {\n      \"type\": \"array\",\n      \"items\": {\n        \"type\": \"string\"\n      },\n      \"description\": \"4 a 6 títulos de cargo cortos para buscar, mezclando español e inglés\"\n    },\n    \"habilidades_tecnicas\": {\n      \"type\": \"array\",\n      \"items\": {\n        \"type\": \"string\"\n      }\n    },\n    \"habilidades_blandas\": {\n      \"type\": \"array\",\n      \"items\": {\n        \"type\": \"string\"\n      }\n    },\n    \"idiomas\": {\n      \"type\": \"array\",\n      \"items\": {\n        \"type\": \"string\"\n      }\n    },\n    \"logros_clave\": {\n      \"type\": \"array\",\n      \"items\": {\n        \"type\": \"string\"\n      }\n    },\n    \"preguntas_aclaracion\": {\n      \"type\": \"array\",\n      \"items\": {\n        \"type\": \"string\"\n      },\n      \"description\": \"3 a 6 preguntas para conocer mejor al candidato\"\n    }\n  },\n  \"required\": [\n    \"nombre\",\n    \"resumen_profesional\",\n    \"cargos_objetivo\",\n    \"keywords_busqueda\",\n    \"habilidades_tecnicas\",\n    \"preguntas_aclaracion\"\n  ]\n}"
+      },
+      "id": "e1bafa5c-776b-5f35-8938-7d9a15c0c7c1",
+      "name": "Formato del perfil",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.2,
+      "position": [
+        560,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Convierte la respuesta de Claude en UNA fila para la pestaña \"Perfil\".\n// La columna \"Clave\" siempre vale \"principal\": así cada vez que subes un CV nuevo\n// se ACTUALIZA la misma fila en vez de crear otra.\nconst p = $json.output;\nconst form = $('Formulario CV').first().json;\n\nreturn [{\n  json: {\n    'Clave': 'principal',\n    'Actualizado': $now.toFormat('yyyy-LL-dd HH:mm'),\n    'Nombre': p.nombre || '',\n    'Email': p.email || '',\n    'Resumen': p.resumen_profesional || '',\n    'Cargos objetivo': (p.cargos_objetivo || []).join(', '),\n    // Puedes editar esta columna a mano en la hoja: el Flujo 2 busca con estas palabras.\n    'Keywords': (p.keywords_busqueda || []).slice(0, 6).join(', '),\n    'Habilidades': (p.habilidades_tecnicas || []).concat(p.habilidades_blandas || []).join(', '),\n    'Idiomas': (p.idiomas || []).join(', ') || form['Idiomas y nivel'] || '',\n    'Modalidad': form['Modalidad'] || 'Ambos',\n    'Salario esperado': form['Salario esperado (USD/mes)'] || '',\n    'Perfil JSON': JSON.stringify(p),\n  }\n}];"
+      },
+      "id": "8ec73226-6dca-504e-832a-1b576a3d14a9",
+      "name": "Preparar fila Perfil",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        800,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "PEGA_AQUI_LA_URL_DE_TU_GOOGLE_SHEET",
+          "mode": "url"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Perfil",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [
+            "Clave"
+          ]
+        },
+        "options": {}
+      },
+      "id": "c4dc05c9-a025-5dbe-a659-cae3b49518e3",
+      "name": "Guardar Perfil",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1020,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Una fila por cada pregunta que Claude necesita que respondas.\n// Tú escribes la respuesta en la columna \"Respuesta\" de la hoja.\nconst preguntas = $('Generar perfil (Claude)').first().json.output.preguntas_aclaracion || [];\nconst hoy = $now.toFormat('yyyy-LL-dd');\n\nreturn preguntas.map(pregunta => ({\n  json: { 'Fecha': hoy, 'Pregunta': pregunta, 'Respuesta': '', 'Origen': 'CV' }\n}));"
+      },
+      "id": "fe2f6e8f-0637-5097-a284-b5a347b661a6",
+      "name": "Separar preguntas",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "PEGA_AQUI_LA_URL_DE_TU_GOOGLE_SHEET",
+          "mode": "url"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Preguntas",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {}
+        },
+        "options": {}
+      },
+      "id": "9b7d28ae-77ca-5456-8e89-091863836801",
+      "name": "Guardar Preguntas",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1460,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Formulario CV": {
+      "main": [
+        [
+          {
+            "node": "Leer PDF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Leer PDF": {
+      "main": [
+        [
+          {
+            "node": "Generar perfil (Claude)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generar perfil (Claude)": {
+      "main": [
+        [
+          {
+            "node": "Preparar fila Perfil",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude (perfil)": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Generar perfil (Claude)",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Formato del perfil": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "Generar perfil (Claude)",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar fila Perfil": {
+      "main": [
+        [
+          {
+            "node": "Guardar Perfil",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Guardar Perfil": {
+      "main": [
+        [
+          {
+            "node": "Separar preguntas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Separar preguntas": {
+      "main": [
+        [
+          {
+            "node": "Guardar Preguntas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/Guayaquil"
+  },
+  "pinData": {}
+}
