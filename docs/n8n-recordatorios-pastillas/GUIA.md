@@ -215,6 +215,7 @@ El bot entiende frases que tengan **"cada X horas"** y **"por Y días"**. Lo dem
 |---|---|
 | `Ibuprofeno cada 8 horas por 3 días` | 9 tomas empezando **ahora** |
 | `Tomar ibuprofeno cada 8 horas por tres días` | Igual (entiende números escritos en letras) |
+| `Ibuprofeno cada 8 horas por 3 días, quiero empezar a las 11am` | 9 tomas, la primera a las 11:00 am (también sirve `a las 11` o `11am`) |
 | `Amoxicilina cada 12 horas por 7 días desde las 8 pm` | 14 tomas, la primera hoy a las 8 pm (o mañana, si esa hora ya pasó) |
 | `Loratadina cada 24 horas durante 2 semanas a partir de las 7:30 am` | 14 tomas diarias a las 7:30 am |
 | `hola` | El bot te explica cómo escribirlo |
@@ -296,7 +297,14 @@ pastilla = pastilla.charAt(0).toUpperCase() + pastilla.slice(1);
 //    Si no dices nada, empieza AHORA.
 const ahora = DateTime.now().setZone(ZONA);
 let inicio = ahora.set({ second: 0, millisecond: 0 });
-const mIni = texto.match(/(?:desde|a partir de|empezando)\s+(?:a\s+)?(?:las?\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm|a\.\s*m\.?|p\.\s*m\.?)?/);
+// Busca la hora en 3 formas, en orden (|| = "si no la encontró, prueba la siguiente"):
+//   a) con una palabra de inicio: "desde las 8", "empezar a las 11am", "comenzando 7:30 pm"
+//   b) solo "a las 11" / "la 1"
+//   c) solo un número con am/pm: "11am", "7:30 pm"
+const mIni =
+  texto.match(/(?:desde|a partir de|empez\w*|comenz\w*|inici\w*)\s+(?:a\s+)?(?:las?\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm|a\.\s*m\.?|p\.\s*m\.?)?/) ||
+  texto.match(/\blas?\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm|a\.\s*m\.?|p\.\s*m\.?)?/) ||
+  texto.match(/\b(\d{1,2})(?::(\d{2}))?\s*(am|pm|a\.\s*m\.?|p\.\s*m\.?)/);
 if (mIni) {
   let h = parseInt(mIni[1]);
   const m = parseInt(mIni[2] || '0');
