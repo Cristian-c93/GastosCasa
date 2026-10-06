@@ -252,6 +252,13 @@ Cualquiera que encuentre tu bot podría escribirle y llenarte el calendario. Par
 
 ---
 
+## 👨‍👩‍👧 Usar el bot con otras personas
+
+1. Cada persona abre `t.me/tu_usuario_bot` y le escribe algo. Si no está en la lista, el bot le contesta con **su número de chat**.
+2. En Google Calendar crea un calendario para esa persona (**Otros calendarios → + → Crear un calendario**) y compártelo con su Gmail ("Ver todos los detalles"). Copia su **ID del calendario** (sección *Integrar el calendario*).
+3. En el nodo **Entender mensaje** agrega una línea en `USUARIOS` con su número y su ID de calendario. Tú usas `'primary'`.
+4. La persona acepta la invitación y activa las notificaciones de ese calendario en su Google Calendar.
+
 ## 📎 Anexo: armar el workflow a mano (si no lo importaste)
 
 ### Nodo 1 – Telegram Trigger
@@ -262,12 +269,23 @@ Cualquiera que encuentre tu bot podría escribirle y llenarte el calendario. Par
 
 ```js
 // ===== CAMBIA ESTO si vives en otro país =====
-const ZONA = 'America/Bogota';
+const ZONA = 'America/Bogota';  //ZONA HORARIA PARA ECUADOR
 // =============================================
 
-const msg = $input.first().json.message;
-const chatId = msg.chat.id;
-let texto = (msg.text || '').toLowerCase();
+const msg = $input.first().json.message;                      //Lee el primer mensaje que llega
+const chatId = msg.chat.id;                                   // Lo almacena en la variable chatId
+
+// Usuarios que tienen permiso para utilizar el bot
+const USUARIOS = {
+  111111111:  { nombre: 'Cristian', calendario: 'primary' },   // ← tu número de chat · primary = tu calendario principal
+  987654321:  { nombre: 'Mamá',     calendario: 'ID_DEL_CALENDARIO@group.calendar.google.com' }, // ← cambiar 987654321 por el número de Mamá
+};
+const usuario = USUARIOS[chatId];
+if (!usuario) {
+  return [{ json: { error: true, noAutorizado: true, chatId } }];   // no está en la lista
+}
+
+let texto = (msg.text || '').toLowerCase();                   // toLowerCase() Pone todo el texto a minusculas - (msg.text= lo que contiene el texto ||= condición si '' = Vacio)
 
 // 1) Cambiar números escritos con letras por cifras ("tres" -> 3)
 const numeros = {
@@ -275,7 +293,7 @@ const numeros = {
   siete: 7, ocho: 8, nueve: 9, diez: 10, once: 11, doce: 12, catorce: 14,
   quince: 15, veinte: 20, treinta: 30,
 };
-texto = texto.split(/(\s+)/).map(p => numeros[p] ?? p).join('');
+texto = texto.split(/(\s+)/).map(p => numeros[p] ?? p).join('');   //texto.split(/(\s+)/)= divide el texto en partes ejm: "uno dos" el resultado es "uno" "dos" - ??= si no existe un valor dejao igual
 
 // 2) Buscar "cada X horas" y "por Y días" (o "por Y semanas")
 const mHoras = texto.match(/cada\s+(\d+)\s*h/);
@@ -302,7 +320,7 @@ let inicio = ahora.set({ second: 0, millisecond: 0 });
 //   b) solo "a las 11" / "la 1"
 //   c) solo un número con am/pm: "11am", "7:30 pm"
 const mIni =
-  texto.match(/(?:desde|a partir de|empez\w*|comenz\w*|inici\w*)\s+(?:a\s+)?(?:las?\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm|a\.\s*m\.?|p\.\s*m\.?)?/) ||
+  texto.match(/(?:desde|a partir de|empez\w*|empiez\w*|comenz\w*|inici\w*)\s+(?:a\s+)?(?:las?\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm|a\.\s*m\.?|p\.\s*m\.?)?/) ||
   texto.match(/\blas?\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm|a\.\s*m\.?|p\.\s*m\.?)?/) ||
   texto.match(/\b(\d{1,2})(?::(\d{2}))?\s*(am|pm|a\.\s*m\.?|p\.\s*m\.?)/);
 if (mIni) {
@@ -323,6 +341,7 @@ for (let i = 0; i < total; i++) {
     json: {
       error: false,
       chatId,
+      calendario: usuario.calendario,   // ← ARREGLO: el nodo Crear evento necesita saber en qué calendario
       pastilla,
       total,
       titulo: `💊 Tomar ${pastilla} (${i + 1}/${total})`,
@@ -342,7 +361,7 @@ return items;
 
 ### Nodo 4 – Google Calendar (nombre: `Crear evento`)
 `+` → **Google Calendar** → **Create an event**.
-- **Calendar:** tu correo
+- **Calendar:** elige **By ID** y escribe `{{ $json.calendario }}` (sale de la lista `USUARIOS`)
 - **Start:** `{{ $json.inicio }}`
 - **End:** `{{ $json.fin }}`
 - **Add Field → Summary:** `{{ $json.titulo }}`
@@ -362,7 +381,7 @@ return items;
 ### Nodo 6 – Telegram (nombre: `No entendí`), en la salida *false* del Nodo 3
 **Telegram → Send a text message**.
 - **Chat ID:** `{{ $json.chatId }}`
-- **Text:** `No te entendí 😅 Escríbelo así: Ibuprofeno cada 8 horas por 3 días desde las 8 am`
+- **Text:** `{{ $json.noAutorizado ? '🔒 Este bot es privado. Pídele al dueño del bot que te agregue.\nTu número es: ' + $json.chatId : 'No te entendí 😅 Escríbelo así: Ibuprofeno cada 8 horas por 3 días desde las 8 am' }}`
 
 ---
 
