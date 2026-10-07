@@ -1,0 +1,381 @@
+{
+  "name": "Cotizador de motos (Telegram → OpenAI)",
+  "nodes": [
+    {
+      "id": "m1",
+      "name": "Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "6f1c2a9e-4b7d-4e3a-9c51-2d8f0b7a3e64",
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {}
+      }
+    },
+    {
+      "id": "m2",
+      "name": "¿Es audio?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "m2c",
+              "leftValue": "={{ !!($json.message.voice || $json.message.audio) }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "m3",
+      "name": "Descargar audio",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        440,
+        -120
+      ],
+      "parameters": {
+        "resource": "file",
+        "operation": "get",
+        "fileId": "={{ ($json.message.voice || $json.message.audio).file_id }}",
+        "download": true,
+        "additionalFields": {}
+      }
+    },
+    {
+      "id": "m3b",
+      "name": "Renombrar audio",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        -120
+      ],
+      "parameters": {
+        "jsCode": "// Las notas de voz de Telegram llegan como \".oga\" y OpenAI no siempre acepta ese nombre.\n// Es el mismo audio (formato Ogg): solo le cambiamos el nombre a \".ogg\".\nconst item = $input.first();\nconst audio = item.binary.data;\nif (/\\.oga$/i.test(audio.fileName || '')) {\n  audio.fileName = audio.fileName.replace(/\\.oga$/i, '.ogg');\n  audio.fileExtension = 'ogg';\n  audio.mimeType = 'audio/ogg';\n}\nreturn [item];\n"
+      }
+    },
+    {
+      "id": "m4",
+      "name": "Pasar audio a texto",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.8,
+      "position": [
+        880,
+        -120
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "resource": "audio",
+        "operation": "transcribe",
+        "binaryPropertyName": "data",
+        "options": {
+          "language": "es"
+        }
+      }
+    },
+    {
+      "id": "m5",
+      "name": "Juntar texto",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// ===== Modelo de OpenAI que usa el bot (si lo cambias, cámbialo solo aquí) =====\nconst MODELO = 'gpt-5.4-mini';\n// ===============================================================================\n\nconst msg = $('Telegram Trigger').first().json.message;     // el mensaje original de Telegram\nconst entrada = $input.first().json;                         // si fue audio, aquí viene lo transcrito\nconst esAudio = !!(msg.voice || msg.audio);\nconst texto = ((esAudio ? entrada.text : msg.text) || '').trim();\n\n// Pedido para OpenAI: que saque marca, modelo, año y km del mensaje\nconst peticion = {\n  model: MODELO,\n  instructions:\n    'Eres el asistente de un negocio de motos en Ecuador. Del mensaje del cliente saca la marca, ' +\n    'el modelo, el año y el kilometraje de la motocicleta. ' +\n    'La marca va en minúsculas y sin tildes (honda, yamaha, suzuki, kawasaki, ktm, royal enfield, bajaj, shineray, akt, tvs...). ' +\n    'Corrige errores de dictado o de escritura (ej.: \"ka te eme\" = ktm, \"roya enfil\" = royal enfield). ' +\n    'El modelo va sin la marca (ej.: \"Dio\", \"Classic 350\", \"Duke 200\"). ' +\n    'Si un dato no aparece, pon null. Si el mensaje no habla de una moto, pon todo en null.',\n  input: texto || '(mensaje vacío)',\n  text: {\n    format: {\n      type: 'json_schema',\n      name: 'pedido',\n      strict: true,\n      schema: {\n        type: 'object',\n        additionalProperties: false,\n        required: ['marca', 'modelo', 'anio', 'km'],\n        properties: {\n          marca: { type: ['string', 'null'] },\n          modelo: { type: ['string', 'null'] },\n          anio: { type: ['integer', 'null'] },\n          km: { type: ['integer', 'null'] },\n        },\n      },\n    },\n  },\n};\n\nreturn [{ json: { chatId: msg.chat.id, texto, esAudio, modelo: MODELO, peticion } }];\n"
+      }
+    },
+    {
+      "id": "m6",
+      "name": "Entender pedido",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1320,
+        0
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/responses",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.peticion) }}",
+        "options": {
+          "timeout": 120000
+        }
+      }
+    },
+    {
+      "id": "m7",
+      "name": "Preparar búsqueda",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// ===== 1) PÁGINA OFICIAL DE CADA MARCA EN ECUADOR =====\n// Solo el dominio: sin https:// y sin nada después de la primera \"/\".\n// Para agregar una marca, copia una línea y cámbiala.\nconst MARCAS = {\n  'honda':         'motos.honda.com.ec',\n  'yamaha':        'yamaha.com.ec',\n  'suzuki':        'suzukimotos.ec',\n  'kawasaki':      'ecuador.kawasaki-la.com',\n  'ktm':           'ktm.com',               // KTM no tiene dominio propio en Ecuador (su página es ktm.com/es-ec)\n  'royal enfield': 'royalenfieldec.com',\n  'bajaj':         'bajajecuador.com',\n  'shineray':      'shineray.com.ec',\n  'akt':           'aktmotos.com',\n  'tvs':           'tvsmotor.com',\n};\n\n// ===== 2) PÁGINAS EXTRA: si el precio no está en la oficial, busca aquí =====\n// Agrega las que quieras, una por línea y entre comillas.\nconst PAGINAS_EXTRA = [\n  'ecuador.patiotuerca.com',\n  'motopower.com.ec',\n];\n\n// ===== 3) (Opcional) QUIÉN PUEDE USAR EL BOT =====\n// Vacío = cualquiera. Ejemplo: [111111111, 987654321]\nconst CHATS_PERMITIDOS = [];\n// =================================================\n\nconst base = $('Juntar texto').first().json;\nconst r = $input.first().json;                     // respuesta de OpenAI (Entender pedido)\nconst { chatId, texto, esAudio } = base;\nconst AYUDA = 'Escríbeme o mándame un audio así:\\n«Tengo una Honda Dio 2026 con 5000 km, ¿en cuánto la acepto?»';\n\nfunction salir(respuesta) {\n  return [{ json: { ok: false, chatId, respuesta } }];\n}\nfunction textoDeOpenAI(res) {\n  let t = '';\n  for (const item of res.output || [])\n    if (item.type === 'message')\n      for (const c of item.content || []) if (c.type === 'output_text') t = c.text;\n  return t;\n}\nconst normal = (s) =>\n  String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]/g, '');\n// \"royal enfield\" → \"Royal Enfield\"; marcas cortas en mayúsculas: \"ktm\" → \"KTM\"\nconst capital = (s) => String(s).replace(/\\S+/g, (p) => (p.length <= 3 ? p.toUpperCase() : p[0].toUpperCase() + p.slice(1)));\n\nif (CHATS_PERMITIDOS.length && !CHATS_PERMITIDOS.map(String).includes(String(chatId))) {\n  return salir(`🔒 Este bot es privado.\\nTu número de chat es: ${chatId}`);\n}\nif (!texto) {\n  return salir(esAudio ? 'No pude escuchar tu audio 😅 Inténtalo otra vez o escríbeme.' : `Hola 👋 ${AYUDA}`);\n}\nif (r.error) {\n  return salir('⚠️ No pude conectarme con OpenAI. Revisa tu clave y que tengas saldo.');\n}\n\nlet pedido = {};\ntry { pedido = JSON.parse(textoDeOpenAI(r)) || {}; } catch (e) {}\n\nconst escuche = esAudio ? `🎤 Te escuché: «${texto}»\\n\\n` : '';\nif (!pedido.marca || !pedido.modelo) {\n  return salir(`${escuche}No te entendí 😅 Necesito por lo menos la marca y el modelo.\\n${AYUDA}`);\n}\n\nconst clave = Object.keys(MARCAS).find((m) => normal(m) === normal(pedido.marca));\nconst oficial = clave ? MARCAS[clave] : null;\nconst dominios = [...new Set([oficial, ...PAGINAS_EXTRA].filter(Boolean))];\nconst marca = capital(clave || pedido.marca);\n\nif (!dominios.length) {\n  return salir(`${escuche}La marca ${marca} no está en mi lista de páginas oficiales.\\nAgrégala en la tabla MARCAS del nodo \"Preparar búsqueda\".`);\n}\n\nconst moto = `${marca} ${pedido.modelo}${pedido.anio ? ' ' + pedido.anio : ''}`;\nconst instrucciones = [\n  `Busca en internet el precio de venta al público en Ecuador, en dólares (USD), de la motocicleta NUEVA (0 km): ${moto}.`,\n  oficial\n    ? `Búscalo primero en la página oficial de la marca: ${oficial}. Solo si ahí no aparece el precio, búscalo en: ${PAGINAS_EXTRA.join(', ')}.`\n    : `Esta marca no tiene página oficial registrada. Búscalo en: ${PAGINAS_EXTRA.join(', ')}.`,\n  'Reglas:',\n  '- Usa la búsqueda web. NO respondas de memoria y NO inventes precios.',\n  '- Solo precio de moto nueva. Ignora anuncios de motos usadas.',\n  '- Si el año pedido no aparece, usa el modelo más reciente publicado y dilo en \"modelo_encontrado\".',\n  '- Si hay varias versiones, elige la más parecida a lo que pidió el cliente.',\n  '- Si ves precio normal y precio de promoción, usa el más bajo y explícalo en \"nota\".',\n  'Responde SOLO con este JSON, sin texto adicional:',\n  '{\"encontrado\": true o false, \"precio\": número sin puntos ni símbolos (ej. 2280), \"modelo_encontrado\": \"texto\", \"url\": \"link donde viste el precio\", \"nota\": \"texto corto o vacío\"}',\n].join('\\n');\n\nconst peticion = {\n  model: base.modelo,\n  tools: [\n    {\n      type: 'web_search',\n      filters: { allowed_domains: dominios },\n      user_location: { type: 'approximate', country: 'EC' },\n    },\n  ],\n  input: instrucciones,\n};\n\nreturn [{\n  json: {\n    ok: true, chatId, escuche, marca,\n    modelo: pedido.modelo, anio: pedido.anio, km: pedido.km,\n    oficial, peticion,\n  },\n}];\n"
+      }
+    },
+    {
+      "id": "m8",
+      "name": "¿Todo bien?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "m8c",
+              "leftValue": "={{ $json.ok }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "m9",
+      "name": "Buscar precio",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1980,
+        -120
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/responses",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.peticion) }}",
+        "options": {
+          "timeout": 120000
+        }
+      }
+    },
+    {
+      "id": "m10",
+      "name": "Calcular precio",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2200,
+        -120
+      ],
+      "parameters": {
+        "jsCode": "// ===== FÓRMULA (cámbiala aquí si algún día cambia) =====\nconst IVA = 0.15;     // 15 % de IVA en Ecuador\nconst MARGEN = 300;   // dólares que restas para tu ganancia\n// Precio para aceptarla = precio oficial × (1 − IVA) − MARGEN\n// ========================================================\n\nconst d = $('Preparar búsqueda').first().json;\nconst r = $input.first().json;                    // respuesta de OpenAI (Buscar precio)\n\nfunction salir(respuesta) {\n  return [{ json: { chatId: d.chatId, respuesta } }];\n}\nfunction textoDeOpenAI(res) {\n  let t = '';\n  for (const item of res.output || [])\n    if (item.type === 'message')\n      for (const c of item.content || []) if (c.type === 'output_text') t = c.text;\n  return t;\n}\nfunction primeraFuente(res) {           // primer link que OpenAI citó\n  for (const item of res.output || [])\n    for (const c of item.content || [])\n      for (const a of c.annotations || []) if (a.type === 'url_citation' && a.url) return a.url;\n  return '';\n}\nfunction leerJSON(t) {\n  const todo = t.match(/\\{[\\s\\S]*\\}/);\n  try { return JSON.parse(todo[0]); } catch (e) {}\n  for (const parte of t.match(/\\{[^{}]*\\}/g) || []) {\n    try { return JSON.parse(parte); } catch (e) {}\n  }\n  return {};\n}\nfunction aNumero(v) {                   // \"2.280\", \"$2,280.00\" o 2280 → 2280\n  if (typeof v === 'number') return v;\n  const s = String(v ?? '').replace(/[^\\d.,]/g, '');\n  const centavos = s.match(/[.,](\\d{1,2})$/);\n  const entero = (centavos ? s.slice(0, -centavos[0].length) : s).replace(/[.,]/g, '');\n  const n = parseFloat(entero + (centavos ? '.' + centavos[1] : ''));\n  return isNaN(n) ? null : n;\n}\nconst miles = (n) => Math.round(n).toString().replace(/\\B(?=(\\d{3})+(?!\\d))/g, '.');\nconst dinero = (n) => '$' + miles(n);\nconst dominioDe = (url) => ((String(url).match(/^https?:\\/\\/([^/?#]+)/i) || [])[1] || '').toLowerCase().replace(/^www\\./, '');\n\nconst titulo = `🏍️ ${d.marca} ${d.modelo}${d.anio ? ' ' + d.anio : ''}${d.km != null ? ' · ' + miles(d.km) + ' km' : ''}`;\n\nif (r.error) {\n  return salir(`${d.escuche}${titulo}\\n⚠️ No pude buscar el precio (error de OpenAI). Revisa tu saldo y vuelve a intentar.`);\n}\n\nconst res = leerJSON(textoDeOpenAI(r));\nconst precio = aNumero(res.precio);\nif (!res.encontrado || !precio) {\n  return salir(\n    `${d.escuche}${titulo}\\n😕 No encontré el precio publicado de esta moto` +\n    `${d.oficial ? ' en ' + d.oficial : ''} ni en las páginas extra.\\n` +\n    'Revisa que el modelo esté bien escrito, o agrega otra página en PAGINAS_EXTRA (nodo \"Preparar búsqueda\").'\n  );\n}\n\nconst aceptar = Math.round(precio * (1 - IVA) - MARGEN);\nif (aceptar <= 0) {\n  return salir(`${d.escuche}${titulo}\\n⚠️ El precio que encontré (${dinero(precio)}) es muy bajo para la fórmula. Revísalo a mano.`);\n}\n\nconst url = res.url || primeraFuente(r);\nconst sitio = dominioDe(url);\nconst esOficial = !!(d.oficial && sitio && (sitio === d.oficial || sitio.endsWith('.' + d.oficial)));\n\nconst lineas = [\n  d.escuche + titulo,\n  `✅ Puedes aceptarla en: ${dinero(aceptar)}`,\n  '',\n  `📋 Precio ${esOficial ? 'oficial' : 'publicado'}: ${dinero(precio)}${res.modelo_encontrado ? ' (' + res.modelo_encontrado + ')' : ''}`,\n  `🧮 ${dinero(precio)} − ${Math.round(IVA * 100)} % IVA − ${dinero(MARGEN)} = ${dinero(aceptar)}`,\n];\nif (!esOficial) lineas.push(`⚠️ Ojo: este precio no salió de la página oficial${sitio ? ', salió de ' + sitio : ''}.`);\nif (res.nota) lineas.push(`📝 ${res.nota}`);\nif (url) lineas.push(`🔗 ${url}`);\n\nreturn salir(lineas.join('\\n'));\n"
+      }
+    },
+    {
+      "id": "m11",
+      "name": "Responder",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2420,
+        0
+      ],
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "={{ $json.respuesta }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "¿Es audio?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Es audio?": {
+      "main": [
+        [
+          {
+            "node": "Descargar audio",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Juntar texto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Descargar audio": {
+      "main": [
+        [
+          {
+            "node": "Renombrar audio",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Renombrar audio": {
+      "main": [
+        [
+          {
+            "node": "Pasar audio a texto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pasar audio a texto": {
+      "main": [
+        [
+          {
+            "node": "Juntar texto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Juntar texto": {
+      "main": [
+        [
+          {
+            "node": "Entender pedido",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Entender pedido": {
+      "main": [
+        [
+          {
+            "node": "Preparar búsqueda",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar búsqueda": {
+      "main": [
+        [
+          {
+            "node": "¿Todo bien?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Todo bien?": {
+      "main": [
+        [
+          {
+            "node": "Buscar precio",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Responder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buscar precio": {
+      "main": [
+        [
+          {
+            "node": "Calcular precio",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calcular precio": {
+      "main": [
+        [
+          {
+            "node": "Responder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/Guayaquil"
+  },
+  "pinData": {}
+}
